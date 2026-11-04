@@ -18,6 +18,80 @@ import {
 type HistoryEntry = { address: string; via: string };
 type Tab = "browser" | "history" | "search" | "publish";
 
+// ─── SiteFrame ───────────────────────────────────────────────────────────────
+// Renders user HTML inside a sandboxed iframe.
+// sandbox flags used:
+//   allow-same-origin  — omitted deliberately: keeps iframe origin opaque so
+//                        scripts (if any slip through) cannot touch parent DOM.
+//   allow-popups       — omitted: no new windows from site content.
+// Cost to authors: no JavaScript, no forms that submit, no external images
+// via relative URLs. Plain HTML + inline styles work fine.
+
+function SiteFrame({
+  body,
+  onNavigate,
+}: {
+  body: string;
+  onNavigate: (address: string) => void;
+}) {
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const [height, setHeight] = useState(300);
+
+  // The srcdoc injects a tiny script that:
+  // 1. Posts link clicks to the parent via postMessage
+  // 2. Reports its own scroll height so we can resize the iframe
+  const srcdoc = `<!DOCTYPE html>
+<html>
+<head>
+<style>
+  body { font-family: Georgia, serif; line-height: 1.7; padding: 2rem;
+         margin: 0; color: #1a1a1a; }
+  a { color: #2563eb; }
+  h1 { font-size: 1.6rem; margin-bottom: 1rem; }
+</style>
+</head>
+<body>
+${body}
+<script>
+  document.addEventListener('click', function(e) {
+    var a = e.target.closest('a');
+    if (!a) return;
+    var href = a.getAttribute('href');
+    if (!href || href.startsWith('http')) return;
+    e.preventDefault();
+    window.parent.postMessage({ type: 'navigate', address: href }, '*');
+  });
+  function reportHeight() {
+    window.parent.postMessage({ type: 'resize', height: document.body.scrollHeight }, '*');
+  }
+  reportHeight();
+  new ResizeObserver(reportHeight).observe(document.body);
+<\/script>
+</body>
+</html>`;
+
+  useEffect(() => {
+    function onMessage(e: MessageEvent) {
+      if (!e.data) return;
+      if (e.data.type === "navigate") onNavigate(e.data.address);
+      if (e.data.type === "resize") setHeight(e.data.height + 32);
+    }
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [onNavigate]);
+
+  return (
+    <iframe
+      ref={iframeRef}
+      srcDoc={srcdoc}
+      sandbox="allow-scripts"
+      style={{ height }}
+      className="w-full border-0 block"
+      title="site-content"
+    />
+  );
+}
+
 // ─── Main Component ───────────────────────────────────────────────────────────
 
 export default function Browser() {
@@ -122,17 +196,6 @@ export default function Browser() {
     if (currentPerson) {
       await recordVisit({ personName: currentPerson, address: addr, via });
     }
-  }
-
-  // ─── Link clicks inside site HTML ────────────────────────────────────────────
-
-  function handleSiteClick(e: React.MouseEvent<HTMLDivElement>) {
-    const target = (e.target as HTMLElement).closest("a");
-    if (!target) return;
-    const href = target.getAttribute("href");
-    if (!href || href.startsWith("http")) return;
-    e.preventDefault();
-    navigate(href, "link");
   }
 
   // ─── History panel ───────────────────────────────────────────────────────────
@@ -254,12 +317,10 @@ export default function Browser() {
                   <span className="font-mono text-sm text-gray-400">{site.address}</span>
                   <span className="text-xs text-gray-400">by {site.author}</span>
                 </div>
-                {/* Site HTML rendered in a sandboxed div */}
-                <div
-                  className="px-8 py-6 prose prose-gray max-w-none site-content"
-                  onClick={handleSiteClick}
-                  dangerouslySetInnerHTML={{ __html: site.body }}
-                />
+                {/* Site HTML sandboxed in iframe — prevents XSS/escape from user content.
+                    allow-same-origin is intentionally omitted so scripts cannot
+                    reach parent DOM. Cost: authors cannot use JS in their pages. */}
+                <SiteFrame body={site.body} onNavigate={(addr) => navigate(addr, "link")} />
               </div>
             )}
           </div>
