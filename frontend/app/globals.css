@@ -1,0 +1,21 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+}
+
+body {
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Links inside user-authored site HTML */
+.site-content a {
+  color: #2563eb;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.site-content a:hover {
+  color: #1d4ed8;
+}
